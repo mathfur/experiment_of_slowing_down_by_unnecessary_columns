@@ -1,0 +1,7 @@
+connection:
+  adapter: mysql
+  username: root
+  password: 
+  socket: /tmp/mysql.sock
+  database: experiment
+  encoding: utf8
