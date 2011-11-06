@@ -2,91 +2,85 @@ require "rubygems"
 require "active_record"
 require "yaml"
 
-# === helpers ============================
-def output(label, t)
-  puts "#{label}, #{t.strftime("%H%M%S")}.#{t.usec}"
-end
-# ========================================
-
-class ExtraColumnBenchmark
-  TABLE_SIZE = 100
-  MAX_GRABAGE_SIZE = 100
-
-  # DB準備系 ===============
-  class Record < ActiveRecord::Base; end
-  class SecondRecord < ActiveRecord::Base; end
-
+class BenchBase
   def connect(cnf)
     %w{adapter username password}.each { |k| raise "The cnf don't have #{k} key." unless cnf.has_key?(k) }
     ::ActiveRecord::Base.establish_connection(cnf)
   end
 
-  def create_table
-    ActiveRecord::Migration.drop_table :records if Record.table_exists?
-    ActiveRecord::Migration.create_table :records do |t|
-      t.integer :int
-      t.text :str
-    end
-    #add_index :records, :int
-
-    ActiveRecord::Migration.drop_table :second_records if SecondRecord.table_exists?
-    ActiveRecord::Migration.create_table :second_records do |t|
-      t.integer :int
-      t.text :str
+  def create_table(table_info)
+    table_info.each do |table_name, columns|
+      ActiveRecord::Migration.create_table table_name.to_sym, :force => true do |t|
+        columns.each do |col_name, type|
+          t.column col_name.to_sym, type.to_sym
+        end
+      end
     end
   end
 
-  def prepare_records(table_size, garbage_size)
-    Record.destroy_all
-    SecondRecord.destroy_all
-    table_size.times do |i|
-      Record.create!(:int=>i, :str=>"*"*garbage_size + i.to_s)
-      SecondRecord.create!(:int=>i, :str=>"*"*garbage_size + i.to_s)
-    end
-    ActiveRecord::Base.connection.execute("OPTIMIZE TABLE records");
-    ActiveRecord::Base.connection.execute("OPTIMIZE TABLE second_records");
-  end
-
-  def initialize
+  def initialize(table_info)
     connection_data = YAML.load_file("db_config.yaml")
     raise "db_config.yaml don't have 'connection' key." unless connection_data.kind_of?(Hash) and connection_data.has_key?("connection")
     connect(connection_data['connection'])
-    create_table
+    create_table(table_info)
   end
 
-  def run(output_block)
+  # mainを実行し、その実行時間を得る
+  #TODO試行回数のうまい変数名はないものか?
+  def run(count_for_mean, all_num)
     results = []
-    puts "index, seconds, garbage_byte"
-    30.times do |j|
-      STDERR.print "."
-      garbage_byte = rand(MAX_GRABAGE_SIZE)
-      prepare_records(TABLE_SIZE, garbage_byte)
-      2.times do |i|
+    puts LABELS.join(",") if Kernel.const_defined?("LABELS")
+    all_num.times do |j|
+      params = prepare || {}
+      count_for_mean.times do |i|
+        # 実行
         start_time = Time.now
-        run_benchmark(TABLE_SIZE, garbage_byte)
+        main(params)
         end_time = Time.now
-        output_block.call(i, start_time, end_time) if output_block
+
+        # 結果出力
+        output(j, i, start_time, end_time, params)
         results << [i, start_time, end_time]
       end
     end
-
-    puts "run was called."
     results
   end
+end
 
-  private
-  def run_benchmark(table_size, garbage_size)
+class ExtraColumnBenchmark < BenchBase
+
+  # 使用するテーブル
+  class Record < ActiveRecord::Base; end
+  class SecondRecord < ActiveRecord::Base; end
+
+  def prepare
+    garbage_byte = rand(1000) # 0-999のうちランダムなサイズのゴミを入れる
+    Record.destroy_all
+    SecondRecord.destroy_all
+    100.times do |i|
+      Record.create!(:int=>i, :str=>"*"*garbage_byte + i.to_s)
+      SecondRecord.create!(:int=>i, :str=>"*"*garbage_byte + i.to_s)
+    end
+    ActiveRecord::Base.connection.execute("OPTIMIZE TABLE records");
+    ActiveRecord::Base.connection.execute("OPTIMIZE TABLE second_records");
+    {:garbage_byte => garbage_byte}
+  end
+
+  def main(params)
+    table_size = params[:table_size]
+    garbage_byte = params[:garbage_byte]
     3.times do
       Record.find_by_int(rand(table_size))
       SecondRecord.find_by_int(rand(table_size))
     end
   end
+
+  LABELS = %w{index seconds garbage_byte}
+  def output(index1, index2, start_time, end_time, params)
+    diff_time = end_time - start_time
+    puts "#{index1}, #{index2}, #{diff_time}, #{params[:garbage_byte]}"
+  end
 end
 
-b = ExtraColumnBenchmark.new
-b.run(
-lambda{|index, start_time, end_time|
-  diff_time = end_time - start_time
-  puts "#{index}, #{diff_time}"
-}
-)
+b = ExtraColumnBenchmark.new(:second_records => {:int => :integer, :str => :text}, :records => {:int => :integer, :str => :text})
+b.run(3, 30)
