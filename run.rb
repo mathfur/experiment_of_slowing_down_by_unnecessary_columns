@@ -54,7 +54,7 @@ class ExtraColumnBenchmark
     create_table
   end
 
-  def run(block)
+  def run(output_block)
     results = []
     puts "index, seconds, garbage_byte"
     30.times do |j|
@@ -62,8 +62,10 @@ class ExtraColumnBenchmark
       garbage_byte = rand(MAX_GRABAGE_SIZE)
       prepare_records(TABLE_SIZE, garbage_byte)
       2.times do |i|
-        start_time, end_time = run_benchmark(TABLE_SIZE, garbage_byte)
-        block.call(i, start_time, end_time) if block
+        start_time = Time.now
+        run_benchmark(TABLE_SIZE, garbage_byte)
+        end_time = Time.now
+        output_block.call(i, start_time, end_time) if output_block
         results << [i, start_time, end_time]
       end
     end
@@ -74,18 +76,17 @@ class ExtraColumnBenchmark
 
   private
   def run_benchmark(table_size, garbage_size)
-    start_time = Time.now
     3.times do
       Record.find_by_int(rand(table_size))
       SecondRecord.find_by_int(rand(table_size))
     end
-    end_time = Time.now
-    return start_time, end_time
   end
 end
 
 b = ExtraColumnBenchmark.new
-b.run(lambda{|index, start_time, end_time|
+b.run(
+lambda{|index, start_time, end_time|
   diff_time = end_time - start_time
   puts "#{index}, #{diff_time}"
-})
+}
+)
